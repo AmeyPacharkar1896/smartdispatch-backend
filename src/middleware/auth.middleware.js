@@ -1,4 +1,4 @@
-const jwt = require('jsonwebtoken');
+import { JsonWebTokenError } from 'jsonwebtoken';
 
 const auth = (roles = []) => {
     return (req, res, next) => {
