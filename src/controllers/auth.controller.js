@@ -5,7 +5,7 @@ import { ApiError } from '../utils/ApiError.js';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { generateAccessAndRefreshTokens } from '../utils/generateTokens.js';
-
+import jwt from 'jsonwebtoken';
 
 const signupController = asyncHandler(async (req, res) => {
   const { name, email, phone_number, password, role, auth_type, profile_picture_url } = req.body;
@@ -232,4 +232,28 @@ const refreshAccessTokenController = asyncHandler(async (req, res) => {
   }
 });
 
-export { signupController, loginController, logoutController, refreshAccessTokenController };
+const getMyProfileController = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+
+  if (!userId) {
+    throw new ApiError(401, "User not identified");
+  }
+
+  const { data: userProfile, error } = await supabase
+    .from('users')
+    .select(
+      'id, name, email, phone_number, role, auth_type, profile_picture_url, created_at'
+    )
+    .eq('id', userId)
+    .single();
+
+  if (error || !userProfile) {
+    throw new ApiError(404, "User profile not found", error?.message);
+  }
+
+  return res.status(200).json(
+    new ApiResponse(200, userProfile, "User profile fetched successfully")
+  );
+});
+
+export { signupController, loginController, logoutController, refreshAccessTokenController, getMyProfileController };

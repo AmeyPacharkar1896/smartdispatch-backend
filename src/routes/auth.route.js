@@ -5,7 +5,8 @@ import {
   signupController, 
   loginController, 
   logoutController,
-  refreshAccessTokenController
+  refreshAccessTokenController,
+  getMyProfileController
 } from '../controllers/auth.controller.js'; // Note the .js extension is often required in ESM
 
 //middleware
@@ -17,6 +18,7 @@ router.post('/refresh-token', refreshAccessTokenController);
 
 //protected
 router.post('/logout', protect, logoutController);
+router.get('/me', protect, getMyProfileController);
 
 
 export default router;
