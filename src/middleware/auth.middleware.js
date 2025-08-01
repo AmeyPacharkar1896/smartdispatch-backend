@@ -1,21 +1,35 @@
-import { JsonWebTokenError } from 'jsonwebtoken';
+import jwt from 'jsonwebtoken';
 
-const auth = (roles = []) => {
-    return (req, res, next) => {
-        const token = req.headers.authorization?.split(' ')[1];
-        if (!token) return res.status(401).json({ message: 'Unauthorized', status: 'error' });
-
+export const protect = (req, res, next) => {
+    let token;
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
         try {
-            const decoded = JsonWebTokenError.verify(token, process.env.JWT_SECRET);
-            req.user = decoded;
-            if (roles.length && !roles.includes(decoded.role)) {
-                return res.status(403).json({ message: 'Acess denied', status: 'error' });
-            }
+            token = req.headers.authorization.split(' ')[1];
+            const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
+            req.user = {
+                id: decoded.sub,
+                role: decoded.role
+            };
+
             next();
-        }   catch (err) {
-            res.status(401).json({ message: 'Invalid token', status: 'error' });
+
+        } catch (error) {
+            console.error(error);
+            res.status(401).json({ message: 'Not authorized, token failed' });
         }
-    };
+    }
+
+    if (!token) {
+        res.status(401).json({ message: 'Not authorized, no token' });
+    }
 };
 
-module.exports = auth;
+
+export const hasRole = (...roles) => {
+    return (req, res, next) => {
+        if (!req.user || !roles.includes(req.user.role)) {
+            return res.status(403).json({ message: `Forbidden: Requires one of the following roles: ${roles.join(', ')}` });
+        }
+        next();
+    };
+};
