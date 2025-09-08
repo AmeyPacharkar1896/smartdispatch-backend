@@ -16,9 +16,11 @@ app.use(express.urlencoded({ extended: true, limit: '20kb' }));
 app.use(express.static('public'));
 
 import { testController } from './controllers/test.controller.js';
+import authRouter from './routes/auth.route.js'
 
 //Routes
-app.use('/api/v1/test', testController);
+app.get('/api/v1/test', testController);
+app.use('/api/v1/auth', authRouter);
 // app.use('/api/users',);
 // app.use('/api/orders',);
 // app.use('/api/admin',);
