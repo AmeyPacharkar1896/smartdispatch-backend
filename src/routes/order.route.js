@@ -5,7 +5,7 @@ const router = express.Router();
 import { protect } from '../middleware/auth.middleware.js';
 
 // Import controller
-import { requestNewDelivery, confirmOrderPayment, getCustomerOrders, customerRateDriver, cancelOrder, getOrderDetails, getDriverOrders, acceptOrder } from '../controllers/order.controller.js';
+import { requestNewDelivery, confirmOrderPayment, getCustomerOrders, customerRateDriver, cancelOrder, getOrderDetails, getDriverOrders, acceptOrder, updateOrderStatus } from '../controllers/order.controller.js';
 
 // Import middleware for driver routes
 import { hasRole } from '../middleware/auth.middleware.js';
@@ -33,5 +33,8 @@ router.put('/:orderId/cancel', protect, cancelOrder);
 
 // PUT route for accepting an order (driver only)
 router.put('/:orderId/accept', protect, hasRole('driver'), acceptOrder);
+
+// PUT route for updating order status (driver only)
+router.put('/:orderId/status', protect, hasRole('driver'), updateOrderStatus);
 
 export default router;

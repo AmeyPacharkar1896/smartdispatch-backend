@@ -677,4 +677,129 @@ const acceptOrder = asyncHandler(async (req, res) => {
   );
 });
 
-export { requestNewDelivery, confirmOrderPayment, getCustomerOrders, customerRateDriver, cancelOrder, getDriverOrders, getOrderDetails, acceptOrder };
+/**
+ * @description Updates order status through the delivery lifecycle (picked_up, delivered).
+ * @route PUT /api/orders/:orderId/status
+ * @access Private (Driver)
+ */
+const updateOrderStatus = asyncHandler(async (req, res) => {
+  // Get authenticated user ID from protect middleware
+  const userId = req.user.id;
+  
+  // Extract orderId from URL parameters
+  const { orderId } = req.params;
+
+  // Extract status from request body
+  const { status: newStatus } = req.body;
+
+  // Validate orderId format
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(orderId)) {
+    throw new ApiError(400, 'Invalid orderId format');
+  }
+
+  // Validate status is one of allowed values
+  const allowedStatuses = ['picked_up', 'delivered'];
+  if (!allowedStatuses.includes(newStatus)) {
+    throw new ApiError(400, 'Invalid status provided.');
+  }
+
+  // Fetch driver profile
+  const { data: driverProfile, error: driverError } = await supabase
+    .from('drivers')
+    .select('id')
+    .eq('user_id', userId)
+    .single();
+
+  // Handle driver profile fetch errors
+  if (driverError || !driverProfile) {
+    throw new ApiError(404, 'Driver profile not found.');
+  }
+
+  const driverId = driverProfile.id;
+
+  // Fetch order with current status and amount
+  const { data: order, error: orderError } = await supabase
+    .from('orders')
+    .select('id, driver_id, status, final_amount, estimated_amount')
+    .eq('id', orderId)
+    .single();
+
+  // Handle order fetch errors
+  if (orderError || !order) {
+    throw new ApiError(404, 'Order not found.');
+  }
+
+  // Authorization: Verify driver owns the order
+  if (order.driver_id !== driverId) {
+    throw new ApiError(403, 'You are not authorized to update this order.');
+  }
+
+  // State Transition Logic
+  const currentStatus = order.status;
+  
+  if (newStatus === 'picked_up') {
+    if (currentStatus !== 'assigned') {
+      throw new ApiError(400, "Order must be 'assigned' to be marked as 'picked_up'.");
+    }
+  } else if (newStatus === 'delivered') {
+    if (currentStatus !== 'picked_up') {
+      throw new ApiError(400, "Order must be 'picked_up' to be marked as 'delivered'.");
+    }
+  }
+
+  // Prepare order update data
+  const updateOrderData = {
+    status: newStatus,
+    updated_at: new Date().toISOString()
+  };
+
+  // Add specific timestamp based on status
+  if (newStatus === 'picked_up') {
+    updateOrderData.picked_up_at = new Date().toISOString();
+  } else if (newStatus === 'delivered') {
+    updateOrderData.delivered_at = new Date().toISOString();
+  }
+
+  // Update order status
+  const { error: orderUpdateError } = await supabase
+    .from('orders')
+    .update(updateOrderData)
+    .eq('id', orderId);
+
+  // Handle order update errors
+  if (orderUpdateError) {
+    console.error('Order update error:', orderUpdateError);
+    throw new ApiError(500, 'Failed to update order status. Please try again.');
+  }
+
+  // Update driver status and earnings (only when order is delivered)
+  if (newStatus === 'delivered') {
+    const orderAmount = order.final_amount || order.estimated_amount;
+    
+    const { error: driverUpdateError } = await supabase
+      .from('drivers')
+      .update({
+        is_delivering: false,
+        is_available: true,
+        total_deliveries: supabase.raw('total_deliveries + 1'),
+        total_earnings: supabase.raw(`total_earnings + ${orderAmount}`),
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', driverId);
+
+    // Handle driver update errors
+    if (driverUpdateError) {
+      // This creates an inconsistent state - in production, you'd need a reconciliation process
+      console.error('CRITICAL: Driver status update failed after order delivery:', driverUpdateError);
+      throw new ApiError(500, 'Order status updated but failed to update driver status. Please contact support.');
+    }
+  }
+
+  // Return success response
+  return res.status(200).json(
+    new ApiResponse(200, { orderStatus: newStatus }, 'Order status updated successfully.')
+  );
+});
+
+export { requestNewDelivery, confirmOrderPayment, getCustomerOrders, customerRateDriver, cancelOrder, getDriverOrders, getOrderDetails, acceptOrder, updateOrderStatus };
