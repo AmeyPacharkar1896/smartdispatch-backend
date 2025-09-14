@@ -277,4 +277,150 @@ const getCustomerOrders = asyncHandler(async (req, res) => {
 });
 
 
-export { requestNewDelivery, confirmOrderPayment, getCustomerOrders };
+/**
+ * @description Allows customers to rate a driver after order delivery.
+ * @route POST /api/orders/:orderId/rate
+ * @access Private (Customer)
+ */
+const customerRateDriver = asyncHandler(async (req, res) => {
+  const customerId = req.user.id;
+  const { orderId } = req.params;
+  const { rating, review } = req.body;
+
+  // Input validation
+  if (!rating || typeof rating !== 'number' || rating < 1 || rating > 5) {
+    throw new ApiError(400, 'Rating must be a number between 1 and 5');
+  }
+
+  // Validate orderId format
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(orderId)) {
+    throw new ApiError(400, 'Invalid orderId format');
+  }
+
+  // --- Start: Authorization & State Validation ---
+  
+  // 1. Fetch order with driver information
+  const { data: order, error: orderError } = await supabase
+    .from('orders')
+    .select(`
+      id,
+      customer_id,
+      status,
+      driver_id,
+      drivers (
+        id,
+        avg_rating,
+        total_deliveries
+      )
+    `)
+    .eq('id', orderId)
+    .single();
+
+  if (orderError || !order) {
+    throw new ApiError(404, 'Order not found');
+  }
+
+  // 2. Authorization: Verify customer owns the order
+  if (order.customer_id !== customerId) {
+    throw new ApiError(403, 'Access denied. You can only rate your own orders.');
+  }
+
+  // 3. State Validation: Check order is delivered
+  if (order.status !== 'delivered') {
+    throw new ApiError(400, 'You can only rate orders that have been delivered.');
+  }
+
+  // 4. Check if driver is assigned
+  if (!order.driver_id) {
+    throw new ApiError(400, 'No driver assigned to this order.');
+  }
+
+  // 5. Prevent Duplicate Ratings: Check if order already rated
+  const { data: existingRating, error: ratingCheckError } = await supabase
+    .from('ratings')
+    .select('id')
+    .eq('order_id', orderId)
+    .single();
+
+  if (ratingCheckError && ratingCheckError.code !== 'PGRST116') { // PGRST116 = no rows found
+    throw new ApiError(500, 'Failed to check existing ratings');
+  }
+
+  if (existingRating) {
+    throw new ApiError(400, 'This order has already been rated.');
+  }
+
+  // --- End: Authorization & State Validation ---
+
+  // --- Start: Transactional Integrity (Atomic Operations) ---
+
+  try {
+    // 1. Insert new rating into ratings table
+    const ratingData = {
+      id: uuidv4(),
+      order_id: orderId,
+      driver_id: order.driver_id,
+      customer_id: customerId,
+      rating: rating,
+      review: review || null,
+      created_at: new Date().toISOString()
+    };
+
+    const { error: ratingInsertError } = await supabase
+      .from('ratings')
+      .insert(ratingData);
+
+    if (ratingInsertError) {
+      throw new ApiError(500, 'Failed to record rating');
+    }
+
+    // 2. Update driver's average rating and total deliveries
+    const currentDriver = order.drivers;
+    const currentAvgRating = currentDriver.avg_rating || 0;
+    const currentTotalDeliveries = currentDriver.total_deliveries || 0;
+    
+    // Calculate new average rating
+    const newTotalDeliveries = currentTotalDeliveries + 1;
+    const newAvgRating = ((currentAvgRating * currentTotalDeliveries) + rating) / newTotalDeliveries;
+
+    const { error: driverUpdateError } = await supabase
+      .from('drivers')
+      .update({
+        avg_rating: Math.round(newAvgRating * 100) / 100, // Round to 2 decimal places
+        total_deliveries: newTotalDeliveries,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', order.driver_id);
+
+    if (driverUpdateError) {
+      // Note: In a production environment, you might want to implement a rollback mechanism
+      // or use database transactions to ensure atomicity
+      console.error('Failed to update driver rating after rating insert:', driverUpdateError);
+      throw new ApiError(500, 'Rating recorded but failed to update driver statistics. Please contact support.');
+    }
+
+    // --- End: Transactional Integrity ---
+
+    // Return success response
+    return res.status(201).json(
+      new ApiResponse(201, {
+        orderId,
+        driverId: order.driver_id,
+        rating,
+        review: review || null,
+        newDriverAvgRating: Math.round(newAvgRating * 100) / 100,
+        newDriverTotalDeliveries: newTotalDeliveries
+      }, 'Rating submitted successfully')
+    );
+
+  } catch (error) {
+    // Re-throw ApiError instances, wrap others
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    throw new ApiError(500, 'An unexpected error occurred while processing the rating');
+  }
+});
+
+export { requestNewDelivery, confirmOrderPayment, getCustomerOrders, customerRateDriver };

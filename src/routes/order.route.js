@@ -5,7 +5,7 @@ const router = express.Router();
 import { protect } from '../middleware/auth.middleware.js';
 
 // Import controller
-import { requestNewDelivery, confirmOrderPayment, getCustomerOrders } from '../controllers/order.controller.js';
+import { requestNewDelivery, confirmOrderPayment, getCustomerOrders, customerRateDriver } from '../controllers/order.controller.js';
 
 // POST route for creating new delivery orders
 router.post('/', protect, requestNewDelivery);
@@ -15,5 +15,8 @@ router.post('/:orderId/pay', protect, confirmOrderPayment);
 
 // GET route for retrieving customer's orders
 router.get('/customer', protect, getCustomerOrders);
+
+// POST route for rating a driver after delivery
+router.post('/:orderId/rate', protect, customerRateDriver);
 
 export default router;
