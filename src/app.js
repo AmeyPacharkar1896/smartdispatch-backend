@@ -10,20 +10,25 @@ app.use(cors({
 }));
 
 app.use(express.json({ limit: '20kb' }));
-
 app.use(express.urlencoded({ extended: true, limit: '20kb' }));
-
 app.use(express.static('public'));
 
+// --- START: Import Routers ---
 import { testController } from './controllers/test.controller.js';
-import authRouter from './routes/auth.route.js'
+import authRouter from './routes/auth.route.js';
+import orderRouter from './routes/order.route.js'; // 1. IMPORT the order router
+import userRouter from './routes/user.route.js';   // (Prepared for our next step)
+// --- END: Import Routers ---
 
-//Routes
+
+// --- START: Route Declarations ---
 app.get('/api/v1/test', testController);
 app.use('/api/v1/auth', authRouter);
-// app.use('/api/users',);
-// app.use('/api/orders',);
-// app.use('/api/admin',);
+app.use('/api/v1/orders', orderRouter); // 2. USE the order router
+app.use('/api/v1/users', userRouter);   // (Prepared for our next step)
+// app.use('/api/admin',); // We will handle this later
+// --- END: Route Declarations ---
+
 
 app.use(errorHandler);
 
