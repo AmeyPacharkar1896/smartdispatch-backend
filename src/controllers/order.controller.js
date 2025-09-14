@@ -249,10 +249,15 @@ const getCustomerOrders = asyncHandler(async (req, res) => {
   const customerId = req.user.id;
   const { status } = req.query;
 
-  // Use `customer_id` from schema for query
+  // Use `customer_id` from schema for query with optimized select and joins
   let query = supabase
     .from('orders')
-    .select('*')
+    .select(`
+      id, status, estimated_amount, final_amount, requested_at, delivered_at, created_at, 
+      pickup_location:pickup_location_id(address_line1, latitude, longitude), 
+      destination_location:destination_location_id(address_line1, latitude, longitude),
+      driver:driver_id ( user:user_id (name, phone_number, profile_picture_url) )
+    `)
     .eq('customer_id', customerId);
 
   if (status) {
@@ -423,4 +428,71 @@ const customerRateDriver = asyncHandler(async (req, res) => {
   }
 });
 
-export { requestNewDelivery, confirmOrderPayment, getCustomerOrders, customerRateDriver };
+/**
+ * @description Allows customers to cancel their orders if in appropriate status.
+ * @route PUT /api/orders/:orderId/cancel
+ * @access Private (Customer)
+ */
+const cancelOrder = asyncHandler(async (req, res) => {
+  // Get authenticated customer ID from protect middleware
+  const customerId = req.user.id;
+  
+  // Extract orderId from URL parameters
+  const { orderId } = req.params;
+
+  // Validate orderId format
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(orderId)) {
+    throw new ApiError(400, 'Invalid orderId format');
+  }
+
+  // Fetch order from database
+  const { data: order, error: fetchError } = await supabase
+    .from('orders')
+    .select('id, customer_id, status')
+    .eq('id', orderId)
+    .single();
+
+  // Handle fetch errors
+  if (fetchError || !order) {
+    throw new ApiError(404, 'Order not found');
+  }
+
+  // Authorization Check: Verify customer owns the order
+  if (order.customer_id !== customerId) {
+    throw new ApiError(403, 'Access denied. You can only cancel your own orders.');
+  }
+
+  // State-Based Cancellation Logic
+  const allowedCancellationStatuses = ['pending_payment', 'booked'];
+  
+  if (!allowedCancellationStatuses.includes(order.status)) {
+    throw new ApiError(400, 'Order cannot be cancelled as it is already in progress or completed.');
+  }
+
+  // Database Operation: Update order status to cancelled
+  const { error: updateError } = await supabase
+    .from('orders')
+    .update({
+      status: 'cancelled',
+      cancelled_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', orderId);
+
+  // Handle update errors
+  if (updateError) {
+    console.error('Database update error:', updateError);
+    throw new ApiError(500, 'Failed to cancel order. Please try again.');
+  }
+
+  // Return success response
+  return res.status(200).json(
+    new ApiResponse(200, {
+      orderId,
+      orderStatus: 'cancelled'
+    }, 'Order cancelled successfully.')
+  );
+});
+
+export { requestNewDelivery, confirmOrderPayment, getCustomerOrders, customerRateDriver, cancelOrder };
