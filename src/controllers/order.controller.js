@@ -547,4 +547,50 @@ const getOrderDetails = asyncHandler(async (req, res) => {
   );
 });
 
-export { requestNewDelivery, confirmOrderPayment, getCustomerOrders, customerRateDriver, cancelOrder, getOrderDetails };
+/**
+ * @description Retrieves orders for the authenticated driver (assigned orders and available orders).
+ * @route GET /api/orders/driver
+ * @access Private (Driver)
+ */
+const getDriverOrders = asyncHandler(async (req, res) => {
+  // Get authenticated user ID from protect middleware
+  const userId = req.user.id;
+
+  // Fetch driver's profile to get driverId
+  const { data: driverProfile, error: driverError } = await supabase
+    .from('drivers')
+    .select('id')
+    .eq('user_id', userId)
+    .single();
+
+  // Handle driver profile fetch errors
+  if (driverError || !driverProfile) {
+    throw new ApiError(404, 'Driver profile not found.');
+  }
+
+  const driverId = driverProfile.id;
+
+  // Construct complex database query with OR conditions
+  const { data: orders, error } = await supabase
+    .from('orders')
+    .select(`
+      id, status, estimated_amount, requested_at, 
+      pickup_location:pickup_location_id (address_line1, city), 
+      destination_location:destination_location_id (address_line1, city),
+      customer:customer_id (name, profile_picture_url)
+    `)
+    .or(`and(driver_id.eq.${driverId},status.in.('assigned','picked_up')),and(status.eq.booked,driver_id.is.null)`);
+
+  // Handle database query errors
+  if (error) {
+    console.error('Database query error:', error);
+    throw new ApiError(500, 'Failed to fetch driver orders. Please try again.');
+  }
+
+  // Return success response with orders array
+  return res.status(200).json(
+    new ApiResponse(200, orders || [], 'Driver orders fetched successfully.')
+  );
+});
+
+export { requestNewDelivery, confirmOrderPayment, getCustomerOrders, customerRateDriver, cancelOrder, getDriverOrders, getOrderDetails };
