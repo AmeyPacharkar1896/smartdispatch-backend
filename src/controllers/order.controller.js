@@ -213,4 +213,46 @@ const confirmOrderPayment = asyncHandler(async (req, res) => {
   );
 });
 
-export { requestNewDelivery, confirmOrderPayment };
+const getCustomerOrders = asyncHandler(async (req, res) => {
+  // Get authenticated customer ID from protect middleware
+  const customerId = req.user.id;
+
+  // Extract optional status query parameter
+  const { status } = req.query;
+
+  // Start building the supabase query
+  let query = supabase
+    .from('orders')
+    .select('*')
+    .eq('customerId', customerId);
+
+  // Add status filtering if provided
+  if (status) {
+    // Split comma-separated status values
+    const statusList = status.split(',').map(s => s.trim()).filter(s => s.length > 0);
+    
+    if (statusList.length > 0) {
+      // Filter by status using 'in' operator for multiple values
+      query = query.in('status', statusList);
+    }
+  }
+
+  // Order results by creation date (newest first)
+  query = query.order('createdAt', { ascending: false });
+
+  // Execute the query
+  const { data: orders, error } = await query;
+
+  // Handle database fetch errors
+  if (error) {
+    console.error('Database fetch error:', error);
+    throw new ApiError(500, 'Failed to fetch orders. Please try again.');
+  }
+
+  // Return success response with orders (empty array if no orders found)
+  return res.status(200).json(
+    new ApiResponse(200, orders || [], 'Orders retrieved successfully')
+  );
+});
+
+export { requestNewDelivery, confirmOrderPayment, getCustomerOrders };
