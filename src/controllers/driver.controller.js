@@ -85,4 +85,59 @@ const createMyDriverProfile = asyncHandler(async (req, res) => {
   );
 });
 
-export { createMyDriverProfile };
+/**
+ * @description Updates the driver's availability status.
+ * @route PUT /api/drivers/me/status
+ * @access Private (Driver)
+ */
+const updateMyAvailability = asyncHandler(async (req, res) => {
+  // Get authenticated user ID from protect middleware
+  const userId = req.user.id;
+
+  // Extract availability status from request body
+  const { isAvailable } = req.body;
+
+  // Validate isAvailable is a boolean
+  if (typeof isAvailable !== 'boolean') {
+    throw new ApiError(400, "The 'isAvailable' field is required and must be a boolean.");
+  }
+
+  // Fetch driver profile
+  const { data: driverProfile, error: fetchError } = await supabase
+    .from('drivers')
+    .select('id, is_delivering')
+    .eq('user_id', userId)
+    .single();
+
+  // Handle fetch errors
+  if (fetchError || !driverProfile) {
+    throw new ApiError(404, 'Driver profile not found. Please create one first.');
+  }
+
+  // Business Logic Check: Cannot go offline while delivering
+  if (driverProfile.is_delivering && !isAvailable) {
+    throw new ApiError(400, 'Cannot go offline while a delivery is in progress.');
+  }
+
+  // Update driver availability status
+  const { error: updateError } = await supabase
+    .from('drivers')
+    .update({
+      is_available: isAvailable,
+      updated_at: new Date().toISOString()
+    })
+    .eq('user_id', userId);
+
+  // Handle update errors
+  if (updateError) {
+    console.error('Database update error:', updateError);
+    throw new ApiError(500, 'Failed to update driver status. Please try again.');
+  }
+
+  // Return success response
+  return res.status(200).json(
+    new ApiResponse(200, { isAvailable }, 'Driver status updated successfully.')
+  );
+});
+
+export { createMyDriverProfile, updateMyAvailability };
