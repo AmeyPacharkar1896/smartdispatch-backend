@@ -593,4 +593,88 @@ const getDriverOrders = asyncHandler(async (req, res) => {
   );
 });
 
-export { requestNewDelivery, confirmOrderPayment, getCustomerOrders, customerRateDriver, cancelOrder, getDriverOrders, getOrderDetails };
+/**
+ * @description Allows drivers to accept available orders with race condition prevention.
+ * @route PUT /api/orders/:orderId/accept
+ * @access Private (Driver)
+ */
+const acceptOrder = asyncHandler(async (req, res) => {
+  // Get authenticated user ID from protect middleware
+  const userId = req.user.id;
+  
+  // Extract orderId from URL parameters
+  const { orderId } = req.params;
+
+  // Validate orderId format
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(orderId)) {
+    throw new ApiError(400, 'Invalid orderId format');
+  }
+
+  // Validate Driver's Status: Fetch driver profile
+  const { data: driverProfile, error: driverError } = await supabase
+    .from('drivers')
+    .select('id, is_available')
+    .eq('user_id', userId)
+    .single();
+
+  // Handle driver profile fetch errors
+  if (driverError || !driverProfile) {
+    throw new ApiError(404, 'Driver profile not found.');
+  }
+
+  // Check if driver is available
+  if (!driverProfile.is_available) {
+    throw new ApiError(403, "You must be 'available' to accept new orders.");
+  }
+
+  const driverId = driverProfile.id;
+
+  // Atomic Order Update (CRITICAL): Prevent race conditions
+  const { data: updateResult, error: updateError } = await supabase
+    .from('orders')
+    .update({
+      driver_id: driverId,
+      status: 'assigned',
+      assigned_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', orderId)
+    .eq('status', 'booked')
+    .select('id');
+
+  // Handle update errors
+  if (updateError) {
+    console.error('Database update error:', updateError);
+    throw new ApiError(500, 'Failed to accept order. Please try again.');
+  }
+
+  // Check if order was successfully updated (race condition check)
+  if (!updateResult || updateResult.length === 0) {
+    throw new ApiError(409, 'Order is no longer available or has already been accepted.');
+  }
+
+  // Update Driver's Own Status: Set as busy
+  const { error: driverUpdateError } = await supabase
+    .from('drivers')
+    .update({
+      is_available: false,
+      is_delivering: true,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', driverId);
+
+  // Handle driver status update errors
+  if (driverUpdateError) {
+    // This creates an inconsistent state - in production, you'd need a reconciliation process
+    console.error('CRITICAL: Driver status update failed after order acceptance:', driverUpdateError);
+    throw new ApiError(500, 'Order accepted but failed to update driver status. Please contact support.');
+  }
+
+  // Return success response
+  return res.status(200).json(
+    new ApiResponse(200, { orderStatus: 'assigned' }, 'Order accepted successfully.')
+  );
+});
+
+export { requestNewDelivery, confirmOrderPayment, getCustomerOrders, customerRateDriver, cancelOrder, getDriverOrders, getOrderDetails, acceptOrder };
