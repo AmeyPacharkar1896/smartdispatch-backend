@@ -495,4 +495,56 @@ const cancelOrder = asyncHandler(async (req, res) => {
   );
 });
 
-export { requestNewDelivery, confirmOrderPayment, getCustomerOrders, customerRateDriver, cancelOrder };
+/**
+ * @description Retrieves detailed information about a specific order.
+ * @route GET /api/orders/:orderId
+ * @access Private (Customer)
+ */
+const getOrderDetails = asyncHandler(async (req, res) => {
+  // Get authenticated customer ID from protect middleware
+  const customerId = req.user.id;
+  
+  // Extract orderId from URL parameters
+  const { orderId } = req.params;
+
+  // Validate orderId format
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(orderId)) {
+    throw new ApiError(400, 'Invalid orderId format');
+  }
+
+  // Optimized database query with all related data in single call
+  const { data: order, error } = await supabase
+    .from('orders')
+    .select(`
+      id, customer_id, status, estimated_amount, final_amount, 
+      requested_at, assigned_at, picked_up_at, delivered_at, cancelled_at, 
+      total_weight_kg, total_volume_cm3, special_instructions,
+      pickup_location:pickup_location_id (address_line1, city, state, latitude, longitude), 
+      destination_location:destination_location_id (address_line1, city, state, latitude, longitude),
+      driver:driver_id ( 
+        avg_rating,
+        user:user_id (name, phone_number, profile_picture_url),
+        vehicle:vehicles(make, model, vehicle_type, license_plate)
+      )
+    `)
+    .eq('id', orderId)
+    .single();
+
+  // Handle query errors or order not found
+  if (error || !order) {
+    throw new ApiError(404, 'Order not found');
+  }
+
+  // Authorization: Verify customer owns the order
+  if (order.customer_id !== customerId) {
+    throw new ApiError(403, 'Access denied.');
+  }
+
+  // Return success response with detailed order data
+  return res.status(200).json(
+    new ApiResponse(200, order, 'Order details fetched successfully.')
+  );
+});
+
+export { requestNewDelivery, confirmOrderPayment, getCustomerOrders, customerRateDriver, cancelOrder, getOrderDetails };
