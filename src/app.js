@@ -16,16 +16,18 @@ app.use(express.static('public'));
 // --- START: Import Routers ---
 import { testController } from './controllers/test.controller.js';
 import authRouter from './routes/auth.route.js';
-import orderRouter from './routes/order.route.js'; // 1. IMPORT the order router
-import userRouter from './routes/user.route.js';   // (Prepared for our next step)
+import orderRouter from './routes/order.route.js';
+import userRouter from './routes/user.route.js';
+import driverRouter from './routes/driver.route.js';
 // --- END: Import Routers ---
 
 
 // --- START: Route Declarations ---
 app.get('/api/v1/test', testController);
 app.use('/api/v1/auth', authRouter);
-app.use('/api/v1/orders', orderRouter); // 2. USE the order router
-app.use('/api/v1/users', userRouter);   // (Prepared for our next step)
+app.use('/api/v1/orders', orderRouter);
+app.use('/api/v1/users', userRouter);
+app.use('/api/v1/drivers', driverRouter);
 // app.use('/api/admin',); // We will handle this later
 // --- END: Route Declarations ---
 
