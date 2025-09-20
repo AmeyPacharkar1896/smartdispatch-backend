@@ -6,7 +6,7 @@ A scalable Node.js + Express backend for SmartDispatch — an AI-enhanced on-dem
 
 ## 🛠 Tech Stack
 - Node.js + Express
-- MongoDB + Mongoose
+- Supabase + Postgres
 - JWT Authentication
 - WebSockets (Socket.io)
 - Axios (AI/ML Service Integration)
