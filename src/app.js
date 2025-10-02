@@ -19,6 +19,7 @@ import authRouter from './routes/auth.route.js';
 import orderRouter from './routes/order.route.js';
 import userRouter from './routes/user.route.js';
 import driverRouter from './routes/driver.route.js';
+import adminRouter from './routes/admin.routes.js';
 // --- END: Import Routers ---
 
 
@@ -28,7 +29,7 @@ app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/orders', orderRouter);
 app.use('/api/v1/users', userRouter);
 app.use('/api/v1/drivers', driverRouter);
-// app.use('/api/admin',); // We will handle this later
+app.use('/api/v1/admin', adminRouter);
 // --- END: Route Declarations ---
 
 
