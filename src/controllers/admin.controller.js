@@ -153,4 +153,48 @@ const assignDriverToOrder = asyncHandler(async (req, res) => {
 
 export { assignDriverToOrder };
 
+// GET /api/v1/admin/users
+const getAllUsers = asyncHandler(async (req, res) => {
+	const page = Math.max(parseInt(req.query.page || '1', 10), 1);
+	const limit = Math.max(parseInt(req.query.limit || '10', 10), 1);
+	const role = (req.query.role || '').trim();
+
+	const from = (page - 1) * limit;
+	const to = from + limit - 1;
+
+	let query = supabase
+		.from('users')
+		.select('id, email, name, role, phone_number, created_at', { count: 'exact' })
+		.order('created_at', { ascending: false })
+		.range(from, to);
+
+	if (role) {
+		query = query.eq('role', role);
+	}
+
+	const { data: users, error, count } = await query;
+
+	if (error) {
+		console.error('Admin fetch users error:', error);
+		throw new ApiError(500, 'Failed to fetch users');
+	}
+
+	const totalUsers = count || 0;
+	const totalPages = Math.max(Math.ceil(totalUsers / limit), 1);
+
+	return res.status(200).json(
+		new ApiResponse(200, {
+			users: users || [],
+			pagination: {
+				totalUsers,
+				totalPages,
+				currentPage: page,
+				limit
+			}
+		}, 'Users retrieved successfully')
+	);
+});
+
+export { getAllUsers };
+
 
