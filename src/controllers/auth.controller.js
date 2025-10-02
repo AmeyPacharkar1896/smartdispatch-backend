@@ -53,21 +53,18 @@ const signupController = asyncHandler(async (req, res) => {
 
   const userToReturn = { ...createdUser };
   delete userToReturn.password_hash;
-
-  const responseData = {
-    user: userToReturn,
-    accessToken,
-    refreshToken
-  };
+  userToReturn["access_token"] = accessToken;
+  userToReturn["refresh_token"] = refreshToken;
 
   return res.status(201).json(
-    new ApiResponse(201, responseData, "User registered and logged in successfully")
+    new ApiResponse(201, userToReturn, "User registered and logged in successfully")
   );
 });
 
 
 const loginController = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
+  console.log(email,password);
 
   if (!email || !password) {
     throw new ApiError(400, "Email and password are required");
@@ -94,12 +91,8 @@ const loginController = asyncHandler(async (req, res) => {
 
   const loggedInUser = { ...user };
   delete loggedInUser.password_hash;
-
-  const responseData = {
-    user: loggedInUser,
-    accessToken,
-    refreshToken
-  };
+  loggedInUser["access_token"] = accessToken;
+  loggedInUser["refresh_token"] = refreshToken;
 
   const options = {
     httpOnly: true,
@@ -111,7 +104,7 @@ const loginController = asyncHandler(async (req, res) => {
     .cookie("accessToken", accessToken, options)
     .cookie("refreshToken", refreshToken, options)
     .json(
-      new ApiResponse(200, responseData, "User logged in successfully")
+      new ApiResponse(200, loggedInUser, "User logged in successfully")
     );
 });
 
