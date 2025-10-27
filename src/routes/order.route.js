@@ -5,7 +5,7 @@ const router = express.Router();
 import { protect } from '../middleware/auth.middleware.js';
 
 // Import controller
-import { requestNewDelivery, confirmOrderPayment, getCustomerOrders, customerRateDriver, cancelOrder, getOrderDetails, getDriverOrders, acceptOrder, updateOrderStatus } from '../controllers/order.controller.js';
+import { requestNewDelivery, confirmOrderPayment, getCustomerOrders, customerRateDriver, cancelOrder, getOrderDetails, getDriverOrders, acceptOrder, updateOrderStatus, getUnassignedOrders } from '../controllers/order.controller.js';
 
 // Import middleware for driver routes
 import { hasRole } from '../middleware/auth.middleware.js';
@@ -21,6 +21,9 @@ router.get('/customer', protect, getCustomerOrders);
 
 // GET route for retrieving driver's orders
 router.get('/driver', protect, hasRole('driver'), getDriverOrders);
+
+// GET route for retrieving unassigned orders
+router.get('/unassigned', protect, getUnassignedOrders);
 
 // GET route for retrieving single order details
 router.get('/:orderId', protect, getOrderDetails);

@@ -463,14 +463,19 @@ const cancelOrder = asyncHandler(async (req, res) => {
 /**
  * @description Retrieves detailed information about a specific order.
  * @route GET /api/orders/:orderId
- * @access Private (Customer)
+ * @access Private (Customer/Driver)
  */
 const getOrderDetails = asyncHandler(async (req, res) => {
-  // Get authenticated customer ID from protect middleware
-  const customerId = req.user.id;
+  // Get authenticated user ID and role from protect middleware
+  const userId = req.user.id;
+  const userRole = req.user.role;
+
+  console.log('Getting order details for userId:', userId, 'role:', userRole);
 
   // Extract orderId from URL parameters
   const { orderId } = req.params;
+  
+  console.log('Order ID:', orderId);
 
   // Validate orderId format
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -478,33 +483,87 @@ const getOrderDetails = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'Invalid orderId format');
   }
 
+  // Get driver ID if user is a driver
+  let driverId = null;
+  if (userRole === 'driver') {
+    const { data: driverProfile, error: driverError } = await supabase
+      .from('drivers')
+      .select('id')
+      .eq('user_id', userId)
+      .single();
+
+    if (driverError || !driverProfile) {
+      throw new ApiError(404, 'Driver profile not found.');
+    }
+    driverId = driverProfile.id;
+  }
+
   // Optimized database query with all related data in single call
   const { data: order, error } = await supabase
     .from('orders')
     .select(`
-      id, customer_id, status, estimated_amount, final_amount, 
+      id, customer_id, driver_id, status, estimated_amount, final_amount, 
       requested_at, assigned_at, picked_up_at, delivered_at, cancelled_at, 
       total_weight_kg, total_volume_cm3, special_instructions,
       pickup_location:pickup_location_id (address_line1, city, state, latitude, longitude), 
-      destination_location:destination_location_id (address_line1, city, state, latitude, longitude),
-      driver:driver_id ( 
-        avg_rating,
-        user:user_id (name, phone_number, profile_picture_url),
-        vehicle:vehicles(make, model, vehicle_type, license_plate)
-      )
+      destination_location:destination_location_id (address_line1, city, state, latitude, longitude)
     `)
     .eq('id', orderId)
     .single();
 
   // Handle query errors or order not found
   if (error || !order) {
+    console.error('Error fetching order:', error);
     throw new ApiError(404, 'Order not found');
   }
+  
+  console.log('Order found, customer_id:', order.customer_id, 'driver_id:', order.driver_id);
 
-  // Authorization: Verify customer owns the order
-  if (order.customer_id !== customerId) {
-    throw new ApiError(403, 'Access denied.');
+  // If order has a driver, fetch driver details separately
+  if (order.driver_id) {
+    const { data: driverData, error: driverDataError } = await supabase
+      .from('drivers')
+      .select(`
+        id,
+        avg_rating,
+        user:user_id (name, phone_number, profile_picture_url)
+      `)
+      .eq('id', order.driver_id)
+      .single();
+    
+    if (!driverDataError && driverData) {
+      order.driver = driverData;
+    }
+    
+    // Try to fetch vehicle details for this driver
+    const { data: vehicleData } = await supabase
+      .from('vehicles')
+      .select('id, make, model, vehicle_type, license_plate')
+      .eq('driver_id', order.driver_id)
+      .limit(1);
+    
+    if (vehicleData && vehicleData.length > 0) {
+      order.driver.vehicle = vehicleData[0];
+    }
   }
+
+  // Authorization: Verify user owns the order (as customer or driver)
+  let hasAccess = false;
+  
+  if (userRole === 'customer') {
+    hasAccess = order.customer_id === userId;
+    console.log('Customer access check:', hasAccess, 'order.customer_id:', order.customer_id, 'userId:', userId);
+  } else if (userRole === 'driver') {
+    hasAccess = order.driver_id === driverId;
+    console.log('Driver access check:', hasAccess, 'order.driver_id:', order.driver_id, 'driverId:', driverId);
+  }
+  
+  if (!hasAccess) {
+    console.log('Access denied for order');
+    throw new ApiError(403, 'Access denied. You can only view your own orders.');
+  }
+  
+  console.log('Access granted, returning order details');
 
   // Return success response with detailed order data
   return res.status(200).json(
@@ -521,6 +580,7 @@ const getDriverOrders = asyncHandler(async (req, res) => {
   // Get authenticated user ID from protect middleware
   const userId = req.user.id;
 
+
   // Fetch driver's profile to get driverId
   const { data: driverProfile, error: driverError } = await supabase
     .from('drivers')
@@ -530,21 +590,55 @@ const getDriverOrders = asyncHandler(async (req, res) => {
 
   // Handle driver profile fetch errors
   if (driverError || !driverProfile) {
+    console.error('Driver profile not found:', driverError);
     throw new ApiError(404, 'Driver profile not found.');
   }
 
   const driverId = driverProfile.id;
 
-  // Construct complex database query with OR conditions
+  // Query for assigned orders first (orders assigned to this driver)
+  const { data: assignedOrders, error: assignedError } = await supabase
+    .from('orders')
+    .select('id, status, driver_id')
+    .eq('driver_id', driverId)
+    .in('status', ['assigned', 'picked_up']);
+  
+  // Query for available orders (booked orders not yet assigned)
+  const { data: availableOrders, error: availableError } = await supabase
+    .from('orders')
+    .select('id, status, driver_id')
+    .eq('status', 'booked')
+    .is('driver_id', null);
+
+  // Check for errors in simple queries
+  if (assignedError || availableError) {
+    console.error('Error fetching driver orders:', assignedError || availableError);
+    throw new ApiError(500, 'Failed to fetch driver orders. Please try again.');
+  }
+
+  // Combine both queries with full details
+  const allOrderIds = [
+    ...(assignedOrders || []).map(o => o.id),
+    ...(availableOrders || []).map(o => o.id)
+  ];
+
+  // If no orders found, return empty array
+  if (allOrderIds.length === 0) {
+    return res.status(200).json(
+      new ApiResponse(200, [], 'No orders found.')
+    );
+  }
+
+  // Fetch full order details
   const { data: orders, error } = await supabase
     .from('orders')
     .select(`
       id, status, estimated_amount, requested_at, 
       pickup_location:pickup_location_id (address_line1, city), 
       destination_location:destination_location_id (address_line1, city),
-      customer:customer_id (name, profile_picture_url)
+      customer:customer_id (name, phone_number)
     `)
-    .or(`and(driver_id.eq.${driverId},status.in.('assigned','picked_up')),and(status.eq.booked,driver_id.is.null)`);
+    .in('id', allOrderIds);
 
   // Handle database query errors
   if (error) {
@@ -605,7 +699,7 @@ const acceptOrder = asyncHandler(async (req, res) => {
       updated_at: new Date().toISOString()
     })
     .eq('id', orderId)
-    .eq('status', 'booked')
+    // .eq('status', 'booked')
     .select('id');
 
   // Handle update errors
@@ -767,4 +861,32 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
   );
 });
 
-export { requestNewDelivery, confirmOrderPayment, getCustomerOrders, customerRateDriver, cancelOrder, getDriverOrders, getOrderDetails, acceptOrder, updateOrderStatus };
+/**
+ * @description Retrieves all orders that are not assigned to any driver.
+ * @route GET /api/orders/unassigned
+ * @access Private
+ */
+const getUnassignedOrders = asyncHandler(async (req, res) => {
+  // Query orders that are booked but not yet assigned to any driver
+  const { data: orders, error } = await supabase
+    .from('orders')
+    .select(`
+      id, status, estimated_amount, requested_at, created_at,
+      pickup_location:pickup_location_id (address_line1, city, latitude, longitude), 
+      destination_location:destination_location_id (address_line1, city, latitude, longitude),
+      customer:customer_id (name, phone_number)
+    `)
+    .is('driver_id', null)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Database query error:', error);
+    throw new ApiError(500, 'Failed to fetch unassigned orders. Please try again.');
+  }
+
+  return res.status(200).json(
+    new ApiResponse(200, orders || [], 'Unassigned orders fetched successfully.')
+  );
+});
+
+export { requestNewDelivery, confirmOrderPayment, getCustomerOrders, customerRateDriver, cancelOrder, getDriverOrders, getOrderDetails, acceptOrder, updateOrderStatus, getUnassignedOrders };
