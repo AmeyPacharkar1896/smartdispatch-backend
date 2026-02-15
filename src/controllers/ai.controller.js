@@ -4,7 +4,7 @@ import { ApiResponse } from '../utils/ApiResponse.js';
 import { ApiError } from '../utils/ApiError.js';
 
 const aiClient = axios.create({
-  baseURL: process.env.AI_ENGINE_URL || 'http://localhost:8000',
+  baseURL: process.env.AI_ENGINE_URL || 'http://localhost:8001',
   timeout: 10000,
 });
 

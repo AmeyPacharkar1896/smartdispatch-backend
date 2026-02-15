@@ -3,6 +3,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiResponse } from '../utils/ApiResponse.js';
 import { ApiError } from '../utils/ApiError.js';
 import { v4 as uuidv4 } from 'uuid';
+import { addStatusPart, removeStatusPart, hasStatusPart, parseStatus } from '../utils/orderStatus.js';
 
 /**
  * @description Creates a new delivery request after validating input and saving locations.
@@ -181,7 +182,8 @@ const confirmOrderPayment = asyncHandler(async (req, res) => {
     throw new ApiError(403, 'Access denied. You can only confirm payment for your own orders.');
   }
 
-  if (order.status !== 'pending_payment' || order.payment_status !== 'pending') {
+  const hasPendingPayment = hasStatusPart(order.status, 'pending_payment');
+  if (!hasPendingPayment || order.payment_status !== 'pending') {
     throw new ApiError(400, 'Order is not in pending payment status.');
   }
 
@@ -213,11 +215,14 @@ const confirmOrderPayment = asyncHandler(async (req, res) => {
     throw new ApiError(500, 'Failed to record payment. Please contact support.');
   }
 
-  // 3. Update order status in the 'orders' table
+  // 3. Update order status: remove pending_payment, keep assigned if present, else set booked
+  const statusAfterPayment = removeStatusPart(order.status, 'pending_payment');
+  const newStatus = statusAfterPayment || 'booked';
+
   const { error: updateError } = await supabase
     .from('orders')
     .update({
-      status: 'booked',
+      status: newStatus,
       payment_status: 'paid',
       updated_at: new Date().toISOString()
     })
@@ -235,7 +240,7 @@ const confirmOrderPayment = asyncHandler(async (req, res) => {
   return res.status(200).json(
     new ApiResponse(200, {
       orderId: order.id,
-      orderStatus: 'booked'
+      orderStatus: newStatus
     }, 'Payment successful.')
   );
 });
@@ -428,10 +433,13 @@ const cancelOrder = asyncHandler(async (req, res) => {
     throw new ApiError(403, 'Access denied. You can only cancel your own orders.');
   }
 
-  // State-Based Cancellation Logic
-  const allowedCancellationStatuses = ['pending_payment', 'booked'];
+  // State-Based Cancellation Logic: allow pending_payment, pending_payment | assigned, booked (exclude picked_up, delivered)
+  const statusParts = parseStatus(order.status);
+  const hasPayableState = statusParts.includes('pending_payment') || statusParts.includes('booked');
+  const hasInProgressState = statusParts.includes('picked_up') || statusParts.includes('delivered');
+  const isCancellable = hasPayableState && !hasInProgressState;
 
-  if (!allowedCancellationStatuses.includes(order.status)) {
+  if (!isCancellable) {
     throw new ApiError(400, 'Order cannot be cancelled as it is already in progress or completed.');
   }
 
@@ -596,18 +604,18 @@ const getDriverOrders = asyncHandler(async (req, res) => {
 
   const driverId = driverProfile.id;
 
-  // Query for assigned orders first (orders assigned to this driver)
+  // Query for assigned orders (includes pending_payment | assigned)
   const { data: assignedOrders, error: assignedError } = await supabase
     .from('orders')
     .select('id, status, driver_id')
     .eq('driver_id', driverId)
-    .in('status', ['assigned', 'picked_up']);
-  
-  // Query for available orders (booked orders not yet assigned)
+    .in('status', ['assigned', 'picked_up', 'pending_payment | assigned']);
+
+  // Query for available orders (booked or pending_payment, not yet assigned)
   const { data: availableOrders, error: availableError } = await supabase
     .from('orders')
     .select('id, status, driver_id')
-    .eq('status', 'booked')
+    .in('status', ['booked', 'pending_payment'])
     .is('driver_id', null);
 
   // Check for errors in simple queries
@@ -659,10 +667,14 @@ const getDriverOrders = asyncHandler(async (req, res) => {
  */
 const acceptOrder = asyncHandler(async (req, res) => {
   // Get authenticated user ID from protect middleware
+
+
   const userId = req.user.id;
 
   // Extract orderId from URL parameters
   const { orderId } = req.params;
+
+
 
   // Validate orderId format
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -689,17 +701,38 @@ const acceptOrder = asyncHandler(async (req, res) => {
 
   const driverId = driverProfile.id;
 
+  // Fetch current order to compute new status (append assigned if pending_payment, else overwrite)
+  const { data: existingOrder, error: fetchOrderError } = await supabase
+    .from('orders')
+    .select('id, status')
+    .eq('id', orderId)
+    .single();
+
+  if (fetchOrderError || !existingOrder) {
+    throw new ApiError(404, 'Order not found.');
+  }
+
+  const currentStatus = existingOrder.status;
+  const isAcceptable = currentStatus === 'pending_payment' || currentStatus === 'booked';
+  if (!isAcceptable) {
+    throw new ApiError(409, 'Order is no longer available or has already been accepted.');
+  }
+
+  const newStatus = currentStatus === 'pending_payment'
+    ? addStatusPart(currentStatus, 'assigned')
+    : 'assigned';
+
   // Atomic Order Update (CRITICAL): Prevent race conditions
   const { data: updateResult, error: updateError } = await supabase
     .from('orders')
     .update({
       driver_id: driverId,
-      status: 'assigned',
+      status: newStatus,
       assigned_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     })
     .eq('id', orderId)
-    // .eq('status', 'booked')
+    .in('status', ['pending_payment', 'booked'])
     .select('id');
 
   // Handle update errors
@@ -794,11 +827,11 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
     throw new ApiError(403, 'You are not authorized to update this order.');
   }
 
-  // State Transition Logic
+  // State Transition Logic (currentStatus can be "assigned" or "pending_payment | assigned")
   const currentStatus = order.status;
 
   if (newStatus === 'picked_up') {
-    if (currentStatus !== 'assigned') {
+    if (!hasStatusPart(currentStatus, 'assigned')) {
       throw new ApiError(400, "Order must be 'assigned' to be marked as 'picked_up'.");
     }
   } else if (newStatus === 'delivered') {
@@ -867,7 +900,7 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
  * @access Private
  */
 const getUnassignedOrders = asyncHandler(async (req, res) => {
-  // Query orders that are booked but not yet assigned to any driver
+  // Query orders that are pending_payment or booked and not yet assigned to any driver
   const { data: orders, error } = await supabase
     .from('orders')
     .select(`
@@ -877,6 +910,7 @@ const getUnassignedOrders = asyncHandler(async (req, res) => {
       customer:customer_id (name, phone_number)
     `)
     .is('driver_id', null)
+    .in('status', ['pending_payment', 'booked'])
     .order('created_at', { ascending: false });
 
   if (error) {
