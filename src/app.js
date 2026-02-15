@@ -20,6 +20,7 @@ import orderRouter from './routes/order.route.js';
 import userRouter from './routes/user.route.js';
 import driverRouter from './routes/driver.route.js';
 import adminRouter from './routes/admin.routes.js';
+import aiRouter from './routes/ai.routes.js';
 // --- END: Import Routers ---
 
 
@@ -30,6 +31,7 @@ app.use('/api/v1/orders', orderRouter);
 app.use('/api/v1/users', userRouter);
 app.use('/api/v1/drivers', driverRouter);
 app.use('/api/v1/admin', adminRouter);
+app.use('/api/v1/ai', aiRouter);
 // --- END: Route Declarations ---
 
 
